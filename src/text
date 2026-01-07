@@ -1,0 +1,284 @@
+import { useEffect, useState } from "react";
+import "./App.css";
+
+/* ===== HELPERS ===== */
+const createCell = () => ({
+  value: "",
+  bold: false,
+  italic: false,
+  bg: "",
+  formula: null,
+});
+
+const cloneCell = (cell) => ({
+  value: cell.value,
+  bold: cell.bold,
+  italic: cell.italic,
+  bg: cell.bg,
+  formula: cell.formula ? { ...cell.formula } : null,
+});
+
+export default function App() {
+  const [data, setData] = useState([]);
+  const [cols, setCols] = useState([]);
+  const [active, setActive] = useState(null);
+
+  const [calcMode, setCalcMode] = useState("column");
+
+  const [copiedRow, setCopiedRow] = useState(null);
+  const [copiedCol, setCopiedCol] = useState(null);
+
+  const [targetType, setTargetType] = useState("column");
+  const [targetIndex, setTargetIndex] = useState("");
+  const [op, setOp] = useState("+");
+  const [opValue, setOpValue] = useState("");
+
+  const colName = (i) => String.fromCharCode(65 + i);
+
+  /* ===== INIT 10x10 ===== */
+  useEffect(() => {
+    setCols(Array.from({ length: 10 }, (_, i) => colName(i)));
+    setData(
+      Array.from({ length: 10 }, () => Array.from({ length: 10 }, createCell))
+    );
+  }, []);
+
+  /* ===== FORMULA ENGINE ===== */
+  const recalc = (table) => {
+    const copy = table.map((row) => row.map((cell) => cloneCell(cell)));
+
+    for (let r = 0; r < copy.length; r++) {
+      for (let c = 0; c < copy[r].length; c++) {
+        const cell = copy[r][c];
+        if (!cell.formula) continue;
+
+        let total = 0;
+        let count = 0;
+
+        if (cell.formula.mode === "column") {
+          for (let i = 0; i < copy.length; i++) {
+            if (i === r) continue;
+            const v = Number(copy[i][cell.formula.index].value);
+            if (!isNaN(v)) {
+              total += v;
+              count++;
+            }
+          }
+        } else {
+          for (let i = 0; i < copy[cell.formula.index].length; i++) {
+            if (i === c) continue;
+            const v = Number(copy[cell.formula.index][i].value);
+            if (!isNaN(v)) {
+              total += v;
+              count++;
+            }
+          }
+        }
+
+        cell.value =
+          cell.formula.type === "sum"
+            ? total
+            : count
+            ? (total / count).toFixed(2)
+            : 0;
+      }
+    }
+    return copy;
+  };
+
+  /* ===== UPDATE CELL ===== */
+  const updateCell = (r, c, value) => {
+    setData((prev) => {
+      const copy = prev.map((row) => row.map((cell) => cloneCell(cell)));
+      copy[r][c].value = value;
+      copy[r][c].formula = null;
+      return recalc(copy);
+    });
+  };
+
+  /* ===== STYLES ===== */
+  const toggleStyle = (key) => {
+    if (!active) return;
+    setData((prev) =>
+      prev.map((row, r) =>
+        row.map((cell, c) =>
+          r === active.r && c === active.c
+            ? { ...cloneCell(cell), [key]: !cell[key] }
+            : cloneCell(cell)
+        )
+      )
+    );
+  };
+
+  const changeBg = () => {
+    if (!active) return;
+    const color = prompt("Enter background color");
+    if (!color) return;
+
+    setData((prev) =>
+      prev.map((row, r) =>
+        row.map((cell, c) =>
+          r === active.r && c === active.c
+            ? { ...cloneCell(cell), bg: color }
+            : cloneCell(cell)
+        )
+      )
+    );
+  };
+
+  /* ===== ADD ROW / COLUMN ===== */
+  const addRow = () => setData((prev) => [...prev, cols.map(createCell)]);
+
+  const addColumn = () => {
+    setCols((c) => [...c, colName(c.length)]);
+    setData((prev) => prev.map((row) => [...row, createCell()]));
+  };
+
+  /* ===== COPY / PASTE (DEEP COPY) ===== */
+  const copyRow = () => {
+    if (!active) return;
+    setCopiedRow(data[active.r].map((cell) => cloneCell(cell)));
+  };
+
+  const pasteRow = () => {
+    if (!active || !copiedRow) return;
+    setData((prev) =>
+      prev.map((row, i) =>
+        i === active.r
+          ? copiedRow.map((cell) => cloneCell(cell))
+          : row.map((cell) => cloneCell(cell))
+      )
+    );
+  };
+
+  const copyCol = () => {
+    if (!active) return;
+    setCopiedCol(data.map((row) => cloneCell(row[active.c])));
+  };
+
+  const pasteCol = () => {
+    if (!active || !copiedCol) return;
+    setData((prev) =>
+      prev.map((row, r) =>
+        row.map((cell, c) =>
+          c === active.c ? cloneCell(copiedCol[r]) : cloneCell(cell)
+        )
+      )
+    );
+  };
+
+  /* ===== SUM / AVG ===== */
+  const calculate = (type) => {
+    if (!active) return;
+    setData((prev) => {
+      const copy = prev.map((row) => row.map((cell) => cloneCell(cell)));
+      copy[active.r][active.c].formula = {
+        type,
+        mode: calcMode,
+        index: calcMode === "column" ? active.c : active.r,
+      };
+      return recalc(copy);
+    });
+  };
+
+  /* ===== SAVE / LOAD JSON ===== */
+  const saveJSON = () => {
+    const blob = new Blob([JSON.stringify({ cols, data }, null, 2)], {
+      type: "application/json",
+    });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "spreadsheet.json";
+    a.click();
+  };
+
+  const loadJSON = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const parsed = JSON.parse(ev.target.result);
+      setCols(parsed.cols);
+      setData(parsed.data);
+      setActive(null);
+    };
+    reader.readAsText(file);
+  };
+
+  /* ===== UI ===== */
+  return (
+    <>
+      <div className="text-center">
+        <button onClick={() => toggleStyle("bold")}>Bold</button>
+        <button onClick={() => toggleStyle("italic")}>Italic</button>
+        <button onClick={changeBg}>Background</button>
+      </div>
+
+      <div className="text-center">
+        <button onClick={addRow}>Add Row</button>
+        <button onClick={addColumn}>Add Column</button>
+        <button onClick={copyRow}>Copy Row</button>
+        <button onClick={pasteRow}>Paste Row</button>
+        <button onClick={copyCol}>Copy Column</button>
+        <button onClick={pasteCol}>Paste Column</button>
+      </div>
+
+      <div className="text-center">
+        <select onChange={(e) => setCalcMode(e.target.value)}>
+          <option value="column">Column</option>
+          <option value="row">Row</option>
+        </select>
+        <button onClick={() => calculate("sum")}>SUM</button>
+        <button onClick={() => calculate("avg")}>AVG</button>
+      </div>
+
+      <div className="text-center">
+        <button onClick={saveJSON}>Save JSON</button>
+        <input type="file" accept=".json" onChange={loadJSON} />
+      </div>
+
+      <table className="excel mx-auto">
+        <thead>
+          <tr>
+            <th>#</th>
+            {cols.map((c) => (
+              <th key={c}>{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((row, r) => (
+            <tr key={r}>
+              <td>{r + 1}</td>
+              {row.map((cell, c) => (
+                <td
+                  key={c}
+                  style={{
+                    background: cell.bg,
+                    outline:
+                      active?.r === r && active?.c === c
+                        ? "2px solid blue"
+                        : "none",
+                  }}
+                >
+                  <input
+                    value={cell.value}
+                    onClick={() => setActive({ r, c })}
+                    onChange={(e) => updateCell(r, c, e.target.value)}
+                    style={{
+                      width: "100%",
+                      border: "none",
+                      fontWeight: cell.bold ? "bold" : "normal",
+                      fontStyle: cell.italic ? "italic" : "normal",
+                    }}
+                  />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
